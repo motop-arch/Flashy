@@ -1,0 +1,118 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Flashcards</title>
+<style>
+:root{--bg:#f6f7fb;--sf:#fff;--tx:#1b1f2a;--mu:#6b7280;--ac:#4f46e5;--ok:#16a34a;--bd:#e5e7eb;--bad:#dc2626}
+:root[data-t=dark]{--bg:#0f1117;--sf:#1a1d27;--tx:#eceef4;--mu:#9aa1b2;--ac:#818cf8;--bd:#2a2e3b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,'Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+#app{max-width:640px;margin:auto;padding:14px 14px 40px}h1{font-size:22px;margin:6px 0 12px}h2{font-size:17px;margin:14px 0 6px}
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:18px;padding:16px;margin:10px 0;animation:f .18s ease}@keyframes f{from{opacity:.4;transform:translateY(4px)}}
+.tap{cursor:pointer}.mu{color:var(--mu);font-size:14px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.sp{justify-content:space-between}
+.btn{border:0;border-radius:14px;padding:13px 16px;min-height:48px;font:inherit;font-weight:600;background:var(--sf);color:var(--tx);border:1px solid var(--bd);flex:1}
+.btn.p{background:var(--ac);color:#fff;border-color:var(--ac)}.btn.d{color:var(--bad)}.btn.s{flex:0;min-height:40px;padding:8px 12px}
+input,textarea,select{width:100%;font:inherit;padding:12px;border-radius:12px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);margin:4px 0}
+textarea{min-height:76px;font-size:20px}.bar{height:8px;background:var(--bd);border-radius:8px;overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--ac)}
+.zh{font-size:34px;line-height:1.35;text-align:center;padding:18px 4px;word-break:break-word}.sec{margin:10px 0;padding-top:10px;border-top:1px solid var(--bd)}.py{font-size:22px;color:var(--ac);text-align:center}
+img.c{max-width:100%;max-height:260px;display:block;margin:10px auto;border-radius:12px;object-fit:contain}audio{width:100%;margin-top:8px}.ok{color:var(--ok)}.bad{color:var(--bad)}.err{background:#dc262622;color:var(--bad);padding:12px;border-radius:12px}
+</style></head><body><div id="app"></div><script>
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+const DB=new Promise((a,b)=>{const r=indexedDB.open('fc',1);r.onupgradeneeded=()=>{const d=r.result;d.createObjectStore('decks',{keyPath:'id'});d.createObjectStore('cards',{keyPath:'id'}).createIndex('deck','deck')};r.onsuccess=()=>a(r.result);r.onerror=()=>b(r.error)});
+const R=r=>new Promise((a,b)=>{r.onsuccess=()=>a(r.result);r.onerror=()=>b(r.error)}),st=async(n,m='readonly')=>(await DB).transaction(n,m).objectStore(n);
+const all=async n=>R((await st(n)).getAll()),put=async(n,v)=>R((await st(n,'readwrite')).put(v)),del=async(n,k)=>R((await st(n,'readwrite')).delete(k)),cardsOf=async id=>R((await st('cards')).index('deck').getAll(id));
+const cfg=()=>Object.assign({theme:'system',iv:[10,1440,4320,10080,20160,43200],ip:true},JSON.parse(localStorage.getItem('cfg')||'{}')),saveCfg=c=>localStorage.setItem('cfg',JSON.stringify(c));
+const fmt=m=>m%1440==0?m/1440+'d':m%60==0?m/60+'h':m+'m';
+const parseIv=s=>s.split(/[,\s]+/).filter(Boolean).map(x=>{const m=x.match(/^(\d+(?:\.\d+)?)([mhd])$/i);if(!m)throw Error('Bad interval "'+x+'". Use e.g. 10m, 1d, 3d');return+m[1]*{m:1,h:60,d:1440}[m[2].toLowerCase()]});
+function theme(){const t=cfg().theme;document.documentElement.dataset.t=t=='dark'||(t=='system'&&matchMedia('(prefers-color-scheme:dark)').matches)?'dark':'light'}
+const blobData=b=>new Promise(r=>{const f=new FileReader;f.onload=()=>r(f.result);f.readAsDataURL(b)}),dataBlob=async u=>(await fetch(u)).blob();
+const U=new Map();function url(c,k){const b=c[k];if(!(b instanceof Blob))return'';const e=U.get(c.id+k);if(e&&e.b===b)return e.u;const u=URL.createObjectURL(b);U.set(c.id+k,{b,u});return u}
+async function saveFile(name,blob){const P=window.Capacitor?.Plugins;if(P?.Filesystem&&P?.Share){const d=(await blobData(blob)).split(',')[1];const r=await P.Filesystem.writeFile({path:name,data:d,directory:'CACHE'});await P.Share.share({title:name,url:r.uri});return}
+const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click()}
+/* ---- import parsing ---- */
+const AL={zh:['chinese','zh','hanzi','word','sentence','front','question','中文','汉字'],py:['pinyin','py','拼音'],en:['english','en','translation','meaning','back','answer'],en2:['translation2','additionaltranslation','additional','en2','other'],def:['explanation','definition','def'],ex:['example','examplesentence','ex'],ext:['exampletranslation','examplesentencetranslation','exen','ext'],img:['image','img','picture'],aud:['audio','aud','sound'],note:['notes','note'],gram:['grammar','grammarpattern','pattern'],cat:['category','topic','cat','tag']};
+const ORDER=['zh','py','en','en2','def','ex','ext','note','gram','cat'];
+const fld=k=>{const n=String(k).toLowerCase().replace(/[\s_\-]/g,'');for(const f in AL)if(AL[f].includes(n))return f;return null};
+function csv(t,d){const rows=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const c=t[i];if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}else if(c=='"')q=true;else if(c==d){r.push(f);f=''}else if(c=='\n'){r.push(f);rows.push(r);r=[];f=''}else if(c!='\r')f+=c}if(f||r.length){r.push(f);rows.push(r)}return rows.filter(r=>r.some(x=>x.trim()))}
+function parseText(txt,fn){txt=txt.replace(/^\uFEFF/,'');const ext=fn.split('.').pop().toLowerCase();let name=fn.replace(/\.[^.]+$/,''),rows,warn=[];
+if(ext=='json'){let j;try{j=JSON.parse(txt)}catch(e){throw Error('This is not valid JSON ('+e.message+').')}
+if(j&&j.decks)throw Error('This is a backup file. Use Settings → Restore backup.');
+if(!Array.isArray(j)){if(j&&Array.isArray(j.cards)){name=j.name||name;j=j.cards}else throw Error('JSON must be a list of cards, or {"name":"…","cards":[…]}.')}
+rows=j.map(o=>{const r={};if(o&&typeof o=='object')for(const k in o){const f=fld(k);if(f&&o[k]!=null&&String(o[k]).trim()!=='')r[f]=String(o[k]).trim()}return r})}
+else{const first=txt.split(/\r?\n/).find(l=>l.trim())||'';const d=ext=='csv'?',':first.includes('\t')?'\t':first.includes('|')?'|':first.includes(',')?',':'\u0001';
+const R2=csv(txt,d);if(!R2.length)throw Error('The file is empty.');let m=R2[0].map(fld);
+if(m.includes('zh'))R2.shift();else{m=ORDER;warn.push('No header row found; columns read in order: Chinese, Pinyin, English, Extra translation, Explanation, Example, Example translation, Notes, Grammar, Category.')}
+rows=R2.map(r=>{const o={};r.forEach((v,i)=>{if(m[i]&&v.trim())o[m[i]]=v.trim()});return o})}
+const ok=rows.filter(r=>r.zh);if(rows.length-ok.length)warn.push((rows.length-ok.length)+' row(s) skipped because the Chinese field is empty.');
+if(!ok.length)throw Error('No cards found. Every card needs a Chinese column (e.g. "chinese" or "zh").');return{name,cards:ok,warn}}
+/* ---- SRS ---- */
+const nextStep=(c,r)=>{const n=cfg().iv.length,b=Math.max(c.step,0);return r==0?0:r==1?b:Math.min(b+(r==2?1:2),n-1)};
+const ivl=(c,r)=>cfg().iv[Math.min(nextStep(c,r),cfg().iv.length-1)];
+/* ---- state/router ---- */
+let V={n:'home'},last='';
+function go(n,o={}){history.pushState(0,'');V={n,...o};render()}
+function up(){const n=V.n;if(n=='deck'||n=='settings'||n=='imp'&&!V.rep&&!V.deck)V={n:'home'};else if(V.deck||V.rep)V={n:'deck',id:V.deck||V.rep};else V={n:'home'};render()}
+addEventListener('popstate',up);
+async function render(){theme();const h=await views[V.n]();$('#app').innerHTML=h;if(last!=V.n){scrollTo(0,0);last=V.n}}
+const top=(t,b=1)=>`<div class="row sp">${b?'<button class="btn s" data-a="up">←</button>':''}<h1 style="flex:1;margin-left:8px">${esc(t)}</h1></div>`;
+const sec=(l,v)=>v?`<div class="sec"><div class="mu">${l}</div><div>${esc(v)}</div></div>`:'';
+const stats=cs=>{const now=Date.now(),done=cs.filter(c=>c.step>=0).length;return{n:cs.length,done,due:cs.filter(c=>c.step<0||c.due<=now).length,pct:cs.length?Math.round(done/cs.length*100):0}};
+const views={
+async home(){const ds=await all('decks'),cs=await all('cards'),by={};cs.forEach(c=>(by[c.deck]??=[]).push(c));
+const L=ds.filter(d=>d.name.toLowerCase().includes((V.q||'').toLowerCase())).sort(V.s=='name'?(a,b)=>a.name.localeCompare(b.name):(a,b)=>b.created-a.created);
+return top('My Decks',0)+`<div class="row"><input id="q" placeholder="Search decks" value="${esc(V.q||'')}" style="flex:2"><select id="so" style="flex:1"><option value="date">Newest</option><option value="name" ${V.s=='name'?'selected':''}>Name</option></select></div>
+<div class="row"><button class="btn p" data-a="imp">＋ Import file</button><button class="btn" data-a="settings">⚙ Settings</button></div>`+
+(L.length?L.map(d=>{const s=stats(by[d.id]||[]);return`<div class="card tap" data-a="open" data-id="${d.id}"><b>${esc(d.name)}</b><div class="mu">${s.n} cards · ${s.done} completed · ${d.last?'Last studied '+new Date(d.last).toLocaleDateString():'Not studied yet'}</div><div class="bar"><i style="width:${s.pct}%"></i></div></div>`}).join(''):`<div class="card mu">${ds.length?'No decks match.':'No decks yet. Tap “Import file” to add your first CSV, TXT or JSON.'}</div>`)},
+async deck(){const d=(await all('decks')).find(x=>x.id==V.id);if(!d){V={n:'home'};return views.home()}const cs=(await cardsOf(d.id)).sort((a,b)=>a.order-b.order),s=stats(cs);
+return top(d.name)+`<div class="card"><div class="mu">${s.n} cards · ${s.done} completed · ${s.due} due</div><div class="bar"><i style="width:${s.pct}%"></i></div></div>
+<div class="row"><button class="btn p" data-a="study" data-id="${d.id}" data-m="due">Study due (${s.due})</button><button class="btn" data-a="study" data-id="${d.id}" data-m="all">Study all</button></div>
+<div class="row"><button class="btn" data-a="study" data-id="${d.id}" data-m="all" data-sh="1">🔀 Shuffle</button><button class="btn" data-a="edit" data-id="${d.id}">＋ Add card</button></div>
+<div class="row"><button class="btn s" data-a="rename" data-id="${d.id}">Rename</button><button class="btn s" data-a="reimp" data-id="${d.id}">Re-import</button><button class="btn s" data-a="export" data-id="${d.id}">Export</button><button class="btn s d" data-a="deldeck" data-id="${d.id}">Delete</button></div>
+<h2>Cards</h2>`+cs.map(c=>`<div class="card row sp"><div style="flex:1;min-width:0"><b>${esc(c.zh)}</b><div class="mu">${esc(c.py||'')} ${esc(c.en||'')}</div></div><button class="btn s" data-a="edit" data-id="${d.id}" data-cid="${c.id}">Edit</button><button class="btn s d" data-a="delcard" data-cid="${c.id}">✕</button></div>`).join('')},
+async imp(){const I=V.imp;if(!I)return top(V.rep?'Re-import deck':'Import')+`<div class="card"><p>Choose a CSV, TXT or JSON file. You can also select images/audio files at the same time (matched by file name).</p><input type="file" id="f" multiple accept=".csv,.txt,.json,image/*,audio/*,text/*,application/json">${V.err?`<div class="err">${esc(V.err)}</div>`:''}</div>`;
+const miss=['py','en','ex','img','aud'].map(k=>[k,I.cards.filter(c=>!c[k]).length]).filter(x=>x[1]);
+return top('Preview')+`<div class="card"><label class="mu">Deck name</label><input id="nm" value="${esc(I.name)}"><div class="mu">${I.cards.length} cards found${V.rep?' · this will REPLACE the existing cards in this deck':''}</div>${I.warn.map(w=>`<div class="mu">⚠ ${esc(w)}</div>`).join('')}${miss.length?`<div class="mu">Cards without: ${miss.map(x=>x[0]+' ('+x[1]+')').join(', ')}</div>`:''}</div>`+I.cards.slice(0,5).map(c=>`<div class="card"><b>${esc(c.zh)}</b> <span class="mu">${esc(c.py||'')}</span><div>${esc(c.en||'')}</div></div>`).join('')+(I.cards.length>5?`<div class="mu">…and ${I.cards.length-5} more</div>`:'')+`<div class="row"><button class="btn" data-a="up">Cancel</button><button class="btn p" data-a="confirm">Confirm import</button></div>`},
+async edit(){const c=V.c||{};const f=(k,l,t)=>`<label class="mu">${l}</label>${t?`<textarea id="e_${k}" style="font-size:16px">${esc(c[k]||'')}</textarea>`:`<input id="e_${k}" value="${esc(c[k]||'')}">`}`;
+return top(V.cid?'Edit card':'New card')+`<div class="card">${f('zh','Chinese *')}${f('py','Pinyin (tone marks)')}${f('en','English translation')}${f('en2','Additional translation')}${f('def','Explanation / definition',1)}${f('ex','Example sentence',1)}${f('ext','Example translation',1)}${f('gram','Grammar pattern')}${f('cat','Category / topic')}${f('note','Notes',1)}
+<label class="mu">Image ${c.img?'(attached)':''}</label><input type="file" id="e_img" accept="image/*"><label class="mu">Audio ${c.aud?'(attached)':''}</label><input type="file" id="e_aud" accept="audio/*">${c.img||c.aud?'<label><input type="checkbox" id="e_rm" style="width:auto"> Remove current image/audio</label>':''}<div id="er"></div></div><div class="row"><button class="btn" data-a="up">Cancel</button><button class="btn p" data-a="savecard">Save</button></div>`},
+async settings(){const c=cfg();return top('Settings')+`<div class="card"><h2>Theme</h2><select id="th"><option value="system">System</option><option value="light" ${c.theme=='light'?'selected':''}>Light</option><option value="dark" ${c.theme=='dark'?'selected':''}>Dark</option></select>
+<h2>Repetition intervals</h2><div class="mu">Steps used by Again → 1st, then each Good moves one step up (Easy two). Examples: 10m, 1d, 3d</div><input id="iv" value="${c.iv.map(fmt).join(', ')}"><label><input type="checkbox" id="ip" style="width:auto" ${c.ip?'checked':''}> Ignore punctuation when checking typed answers</label><button class="btn p" data-a="saveset" style="width:100%;margin-top:8px">Save settings</button><div id="er"></div></div>
+<div class="card"><h2>Backup & restore</h2><div class="mu">Backup includes all decks, cards, images, audio and progress.</div><div class="row"><button class="btn p" data-a="backup">Back up everything</button></div><label class="mu">Restore from a backup file</label><input type="file" id="rs" accept=".json,application/json"></div>`},
+async study(){const S=V,n=S.queue.length;if(!n)return top(S.title)+`<div class="card">Nothing due in this deck right now.</div><div class="row"><button class="btn p" data-a="study" data-id="${S.deck}" data-m="all">Study all cards</button></div>`;
+if(S.done)return top(S.title)+`<div class="card" style="text-align:center"><h1>🎉 Deck finished</h1><div class="mu">${n} cards reviewed</div></div><div class="row"><button class="btn p" data-a="restart">Restart</button><button class="btn" data-a="up">Back to deck</button></div>`;
+const c=S.queue[S.i],rev=S.rev&&c.en,q=rev?c.en+(c.en2?'\n'+c.en2:''):c.zh,tgt=rev?c.zh:c.en;let res='';
+if(S.shown&&S.ans&&tgt){const nm=s=>{s=s.replace(/\s+/g,'').toLowerCase();return cfg().ip?s.replace(/[\p{P}\p{S}]/gu,''):s},a=nm(S.ans);const okk=tgt.split(/[;；\/／]/).some(t=>nm(t)==a||nm(t)==a);res=`<div class="${okk?'ok':'bad'}">${okk?'✓ Correct':'✗ Not quite — compare:'} <b>${esc(tgt)}</b></div>`}
+let ans='';if(S.shown){ans=`<div class="sec">${rev?`<div class="zh" style="padding:4px">${esc(c.zh)}</div>`:''}${c.py?`<div class="py">${esc(c.py)}</div>`:''}${rev?'':sec('Translation',c.en)}${rev?sec('Additional translation',c.en2):sec('Additional translation',c.en2)}${sec('Explanation',c.def)}${sec('Example',c.ex)}${sec('Example translation',c.ext)}${sec('Grammar',c.gram)}${sec('Category',c.cat)}${sec('Notes',c.note)}${c.img instanceof Blob?`<img class="c" src="${url(c,'img')}">`:''}${c.aud instanceof Blob?`<button class="btn p" data-a="aud" style="width:100%">🔊 Tap to Play Audio</button><audio id="au" controls src="${url(c,'aud')}"></audio>`:''}</div>
+<div class="row">${[['Again',0],['Difficult',1],['Good',2],['Easy',3]].map(([l,r])=>`<button class="btn ${r==2?'p':''}" data-a="rate" data-r="${r}">${l}<div class="mu" style="font-size:11px;color:inherit;opacity:.7">${fmt(ivl(c,r))}</div></button>`).join('')}</div>`}
+return`<div class="row sp"><button class="btn s" data-a="up">✕</button><b>${S.i+1} / ${n}</b><button class="btn s" data-a="sh">🔀</button><button class="btn s" data-a="restart">↺</button></div><div class="bar"><i style="width:${(S.i+1)/n*100}%"></i></div>
+<div class="card"><div class="zh" style="white-space:pre-line">${esc(q)}</div>${S.shown?res:`<textarea id="ans" placeholder="Optional: type your answer ${rev?'in Chinese':''}">${esc(S.ans||'')}</textarea><div class="row"><button class="btn s" data-a="clr">Clear</button><button class="btn s" data-a="rv">${rev?'Type meaning instead':'Type Chinese (from English)'}</button></div>`}${S.shown?'':`<button class="btn p" data-a="show" style="width:100%;margin-top:10px">Show Answer</button>`}${ans}</div>
+<div class="row"><button class="btn" data-a="prev" ${S.i==0?'disabled':''}>← Previous</button><button class="btn" data-a="next" ${S.i>=n-1?'disabled':''}>Next →</button></div>`}};
+/* ---- actions ---- */
+const err=(e,id='er')=>{const x=$('#'+id);if(x)x.innerHTML=`<div class="err">${esc(e.message||e)}</div>`};
+const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
+const A={up,settings:()=>go('settings'),imp:()=>go('imp'),open:t=>go('deck',{id:t.dataset.id}),reimp:t=>go('imp',{rep:t.dataset.id}),
+async study(t){const d=(await all('decks')).find(x=>x.id==t.dataset.id),now=Date.now();let cs=(await cardsOf(d.id)).sort((a,b)=>a.order-b.order);if(t.dataset.m=='due')cs=cs.filter(c=>c.step<0||c.due<=now);if(t.dataset.sh)shuffle(cs);V={n:'study',deck:d.id,title:d.name,mode:t.dataset.m,queue:cs,i:0,shown:false,ans:'',rev:V.rev};history.pushState(0,'');render()},
+async rename(t){const d=(await all('decks')).find(x=>x.id==t.dataset.id),n=prompt('Deck name',d.name);if(n&&n.trim()){d.name=n.trim();await put('decks',d);render()}},
+async deldeck(t){if(!confirm('Delete this deck and all its cards?'))return;for(const c of await cardsOf(t.dataset.id))await del('cards',c.id);await del('decks',t.dataset.id);V={n:'home'};render()},
+async delcard(t){if(confirm('Delete this card?')){await del('cards',t.dataset.cid);render()}},
+async edit(t){const c=t.dataset.cid?(await cardsOf(t.dataset.id)).find(x=>x.id==t.dataset.cid):null;go('edit',{deck:t.dataset.id,cid:t.dataset.cid,c})},
+async savecard(){try{const zh=$('#e_zh').value.trim();if(!zh)throw Error('The Chinese field is required.');const old=V.c||{},c=old.id?old:{id:uid(),deck:V.deck,order:Date.now(),step:-1,due:0,hist:[]};
+for(const k of['zh','py','en','en2','def','ex','ext','gram','cat','note']){const v=$('#e_'+k).value.trim();if(v)c[k]=v;else delete c[k]}
+if($('#e_rm')?.checked){delete c.img;delete c.aud}for(const k of['img','aud']){const f=$('#e_'+k).files[0];if(f)c[k]=f}await put('cards',c);up()}catch(e){err(e)}},
+async confirm(){const I=V.imp;I.name=$('#nm').value.trim()||I.name;try{const id=V.rep||uid();let created=Date.now();if(V.rep){created=(await all('decks')).find(d=>d.id==id)?.created||created;for(const c of await cardsOf(id))await del('cards',c.id)}
+await put('decks',{id,name:I.name,created,last:0});let n=0;for(const r of I.cards){const c={id:uid(),deck:id,order:n++,step:-1,due:0,hist:[],...r};for(const k of['img','aud'])if(c[k]){let b=null;if(c[k].startsWith('data:'))b=await dataBlob(c[k]);else b=I.media[c[k].split(/[\\/]/).pop().toLowerCase()]||null;if(b)c[k]=b;else delete c[k]}await put('cards',c)}V={n:'deck',id};history.pushState(0,'');render()}catch(e){alert('Import failed: '+e.message)}},
+show(){V.shown=true;render()},clr(){V.ans='';$('#ans').value=''},rv(){V.rev=!V.rev;render()},
+prev(){V.i--;V.shown=false;V.ans='';render()},next(){V.i++;V.shown=false;V.ans='';render()},
+restart(){V.queue=V.mode=='due'?V.queue:V.queue.sort((a,b)=>a.order-b.order);V.i=0;V.done=false;V.shown=false;V.ans='';render()},
+sh(){shuffle(V.queue);V.i=0;V.done=false;V.shown=false;V.ans='';render()},
+aud(){const a=$('#au');a.currentTime=0;a.play()},
+async rate(t){const c=V.queue[V.i],r=+t.dataset.r,iv=ivl(c,r);c.hist=(c.hist||[]).concat({t:Date.now(),r}).slice(-200);c.step=nextStep(c,r);c.due=Date.now()+iv*60000;await put('cards',c);const d=(await all('decks')).find(x=>x.id==V.deck);d.last=Date.now();await put('decks',d);
+if(V.i>=V.queue.length-1)V.done=true;else{V.i++}V.shown=false;V.ans='';render()},
+saveset(){try{const c=cfg();c.theme=$('#th').value;c.iv=parseIv($('#iv').value);if(!c.iv.length)throw Error('Enter at least one interval.');c.ip=$('#ip').checked;saveCfg(c);theme();$('#er').innerHTML='<div class="ok">Saved ✓</div>'}catch(e){err(e)}},
+async backup(){const out={v:1,decks:await all('decks'),cards:[]};for(const c of await all('cards')){const x={...c};for(const k of['img','aud'])if(x[k] instanceof Blob)x[k]=await blobData(x[k]);out.cards.push(x)}await saveFile('flashcards-backup-'+new Date().toISOString().slice(0,10)+'.json',new Blob([JSON.stringify(out)],{type:'application/json'}))},
+async export(t){const d=(await all('decks')).find(x=>x.id==t.dataset.id),out={v:1,decks:[d],cards:[]};for(const c of await cardsOf(d.id)){const x={...c};for(const k of['img','aud'])if(x[k] instanceof Blob)x[k]=await blobData(x[k]);out.cards.push(x)}await saveFile(d.name.replace(/[^\w\u4e00-\u9fa5-]+/g,'_')+'.json',new Blob([JSON.stringify(out)],{type:'application/json'}))}};
+document.addEventListener('click',e=>{const t=e.target.closest('[data-a]');if(t&&!t.disabled)Promise.resolve(A[t.dataset.a](t)).catch(x=>alert(x.message))});
+document.addEventListener('input',e=>{if(e.target.id=='ans')V.ans=e.target.value;if(e.target.id=='q'){V.q=e.target.value;render().then(()=>{const i=$('#q');i.focus();i.setSelectionRange(i.value.length,i.value.length)})}});
+document.addEventListener('change',async e=>{const i=e.target;if(i.id=='so'){V.s=i.value;render()}
+if(i.id=='f'){const fs=[...i.files],tf=fs.find(f=>/\.(csv|txt|json)$/i.test(f.name));V.err='';try{if(!tf)throw Error('Please select a .csv, .txt or .json file.');const media={};fs.filter(f=>f!==tf).forEach(f=>media[f.name.toLowerCase()]=f);const p=parseText(await tf.text(),tf.name);V.imp={...p,media};if(V.rep){const d=(await all('decks')).find(x=>x.id==V.rep);p.name=d.name}}catch(x){V.err=x.message}render()}
+if(i.id=='rs'&&i.files[0]){try{const j=JSON.parse((await i.files[0].text()).replace(/^\uFEFF/,''));if(!j.decks||!j.cards)throw Error('This is not a flashcards backup file.');if(!confirm('Restore '+j.decks.length+' deck(s) and '+j.cards.length+' cards? Matching decks will be overwritten.'))return;
+for(const d of j.decks)await put('decks',d);for(const c of j.cards){for(const k of['img','aud'])if(typeof c[k]=='string'&&c[k].startsWith('data:'))c[k]=await dataBlob(c[k]);await put('cards',c)}alert('Restore complete.');V={n:'home'};render()}catch(x){alert('Restore failed: '+x.message)}}});
+matchMedia('(prefers-color-scheme:dark)').addEventListener('change',theme);
+navigator.storage?.persist?.();render();
+</script></body></html>
